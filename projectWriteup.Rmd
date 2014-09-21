@@ -130,8 +130,8 @@ confusionMatrix(testing$classe, predict(modelFit, testing))$overall["Accuracy"]
 - Good but not impressive. Lets try with more data.
 ``` {r echo = TRUE, results='hide'}
 inTrain <- createDataPartition(y=tempTraining$classe, p=0.5, list=FALSE)
-training <- finalData[inTrain,]
-testing <- finalData[-inTrain,]
+training <- tempTraining[inTrain,]
+testing <- tempTraining[-inTrain,]
 training <- training[,!(names(training) == "X")]
 modelFit <- train(classe ~ .,method="rpart",data=training)
 modelFit$finalModel
