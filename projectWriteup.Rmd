@@ -1,0 +1,202 @@
+---
+title: "Practical Machine Learning, Project Writeup"
+date: "Sunday, September 21, 2014"
+output: html_document
+---
+
+### Introduction
+
+This is a Project Writeup for Coiursera "Practical Machine Learning" course. Here we will analyze data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants ( http://groupware.les.inf.puc-rio.br/har). The goal of this project is to predict the manner in which they did the exercise. 
+The follwoing chapters describes the steps we have used to prepare the final prediction model.
+
+
+### 1. Pre-processing and Cleaning Data
+
+#### 1.1 Loading data
+
+- Here we are loading empty strings as NA to avoid confusion. 
+- We have already downloaded the training dataset from "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv" to current working directory of R.
+``` {r echo = TRUE}
+rawData <- read.csv("pml-training.csv", header=TRUE, na.strings=c("NA","NaN", " ", ""))
+```
+
+#### 1.2 Do some initial exploration
+``` {r echo = TRUE}
+nrow(rawData)
+```
+``` {r echo = TRUE, , results='hide'}
+head(rawData,10)
+```
+- From aove it seems there are contineous NA for some columns
+
+#### 1.3 lets check how many records with complete attributes
+``` {r echo = TRUE}
+nrow(rawData[complete.cases(rawData),])
+```
+- only 406, too less
+
+#### 1.4 Let's check how many incomplete columns(having more than 25% NAs)
+``` {r echo = TRUE}
+sum(colSums(is.na(rawData)) > nrow(rawData) * 0.75)
+```
+- Seems it is wise to get rid of those columns will NA. As they have all NAs, so not usable.
+
+#### 1.5 Eliminate colums which have too many NAs
+``` {r echo = TRUE}
+cleanData <- rawData[,!colSums(is.na(rawData)) > nrow(rawData) * 0.75]
+```
+
+#### 1.6 Timestamps will not be that much usable in general. So,  lets try with avoiding them.
+- eliminate unnecessary column (username, timestamps etc)
+``` {r echo = TRUE}
+drops <- c("user_name","raw_timestamp_part_1","raw_timestamp_part_2","cvtd_timestamp")
+cleanData <- cleanData[,!(names(cleanData) %in% drops)]
+```
+
+#### 1.7 Prepare the final data set 
+- Lets check again all the records with complete records
+``` {r echo = TRUE}
+nrow(cleanData[complete.cases(cleanData),])
+```
+
+- Now seems ok to prepare final set
+``` {r echo = TRUE}
+finalData <- cleanData[complete.cases(cleanData),]
+```
+- make sure we have not eliminated the outcome column and all the records are there
+``` {r echo = TRUE}
+sum(names(finalData)=="classe")
+length(finalData)
+```
+
+
+### 2. Dataset Preparation 
+
+#### 2.1 Initially keep a sperate set of data for cross validation. We will run pretiction test only one time at the end.
+
+- Load caret package
+``` {r echo = TRUE, message=FALSE}
+library(caret)
+```
+
+- Seperate a finalTest set. 10% of total dataset.
+``` {r echo = TRUE}
+inTempTrain <- createDataPartition(y=finalData$classe, p=0.10, list=FALSE)
+finalTest <- finalData[inTempTrain,]
+tempTraining <- finalData[-inTempTrain,]
+```
+#### 2.2 We will use 'tempTraining' data set for the rest of machine learning activities.
+
+#### 2.3 We will use 'finalTest' data set for only 1 time at the end of the analysis for out of sample testing.
+
+
+### 3. Initial Prediction Analysis
+
+#### 3.1 use small amount of data to do initial prediction test
+
+- Prepare a small training data set, it will be very fast to do initial modeling  
+``` {r echo = TRUE}
+inTrain <- createDataPartition(y=tempTraining$classe, p=0.05, list=FALSE)
+training <- tempTraining[inTrain,]
+testing <- tempTraining[-inTrain,]
+```
+
+#### 3.2 lets try with simple tree
+``` {r echo = TRUE, message=FALSE}
+modelFit <- train(classe ~ .,method="rpart",data=training)
+modelFit$finalModel
+```
+- Above shows it is only based on a single variable "X"
+
+#### 3.3 Explore the only predictor a bit more
+``` {r echo = TRUE}
+plot(training$X,col=training$classe)
+```
+
+- Above shows that "X" is sequentialy increasing variable and values of training$classe are also sorted sequentially, seems no real correlation
+
+#### 3.4 Try tree without "X"
+``` {r echo = TRUE, message=FALSE}
+training <- training[,!(names(training) == "X")]
+modelFit <- train(classe ~ .,method="rpart",data=training)
+modelFit$finalModel
+````
+- Now seems better, atleast using more variables
+
+- Let's check prediction rate
+``` {r echo = TRUE}
+confusionMatrix(testing$classe, predict(modelFit, testing))$overall["Accuracy"]
+```
+- Good but not impressive. Lets try with more data.
+``` {r echo = TRUE, results='hide'}
+inTrain <- createDataPartition(y=tempTraining$classe, p=0.5, list=FALSE)
+training <- finalData[inTrain,]
+testing <- finalData[-inTrain,]
+training <- training[,!(names(training) == "X")]
+modelFit <- train(classe ~ .,method="rpart",data=training)
+modelFit$finalModel
+```
+``` {r echo = TRUE}
+confusionMatrix(testing$classe, predict(modelFit, testing))$overall["Accuracy"]
+```
+- No significant improvement
+
+#### 3.5 So, it seems we need to use more sophisticated models & also need to Exclude "X" from predictors.
+
+### 4. Final Prediction Modeling
+
+#### 4.1 Prepare the dataset.
+- Still we will try to use small amount(30%) of data for training to reduce training time and also avoiding overfitting.
+``` {r echo = TRUE}
+drops <- c("user_name", "raw_timestamp_part_1", "raw_timestamp_part_2", "cvtd_timestamp", "X")
+tempTraining <- tempTraining[,!(names(tempTraining) %in% drops)]
+inTrain <- createDataPartition(y=tempTraining$classe, p=0.30, list=FALSE)
+training <- tempTraining[inTrain,]
+testing <- tempTraining[-inTrain,]
+```
+
+#### 4.2 Lets train a model with boosting.
+- We are using smaller number of n.trees to reduce training time. 
+- If accuracy is acceptable, we will not increase n.tree. 
+``` {r echo = TRUE, results='hide', message=FALSE}
+gbmGrid <-  expand.grid(interaction.depth = 5, n.trees = 100, shrinkage = 0.1)
+modelFit <- train(classe ~ .,method="gbm",data=training,tuneGrid=gbmGrid)
+```
+
+#### 4.3 Check acuracy using
+``` {r echo = TRUE}
+confusionMatrix(testing$classe, predict(modelFit, testing))
+```
+
+#### 4.4 Accuracy seems encouraging. So, we can go forward for validation.
+
+### 5. Cross validation
+#### 5.1 For Cross validation we have prepared 3 list as below:
+- A fully seperated final test set. We will run prediction testing only once as if out of sample testing.
+- Rest of the data will be used for training and in sample testing
+- A test & a training set from the rest of the sample
+- We have used smaller amount of data for training and larget for testing. It will make help us reduce the change of overfitting.
+
+#### 5.2 In sample accuracy
+- From the point **4.3** it accuracy is very good for in sample testing. Error rate is very low.
+- **Our training set was smaller and testing set was larger and still in sample accuracy is very good. So, we think that out of sample error will also be low.**
+
+#### 5.2 Out of Sample accuracy
+- Lets try with out of sample:
+``` {r echo = TRUE}
+confusionMatrix(finalTest$classe, predict(modelFit, finalTest))
+```
+- Seems very good out os sample accuracy as expected in point **5.2**.
+
+
+#### 5.3 Finalize Model Selection
+- **We can say, the difference between insample and out of sample error not that significant. Still very good accuracy.**
+- **So, we can chose this model(step 4.2) as final, as it fast and and accurate**.
+
+
+### Conclusion
+We have relied directly on the acapbility of tools(caret) we used to identify important predictors. 
+So, there was no effort to select predictor using PCA or other options. 
+Although we are getting very good prediction accuracy it may be not the same is all cases.
+On the other hand, we have used boosting which is not easy to interpret. 
+We can improve interpretation if we could use other simpler method.
